@@ -1,0 +1,503 @@
+package com.example.visiting_cardbusiness_card
+
+import android.content.Context
+import android.util.Log
+import com.example.visiting_cardbusiness_card.model.CardResult
+import com.google.mlkit.nl.entityextraction.*
+import com.google.mlkit.vision.text.Text
+import kotlinx.coroutines.tasks.await
+import java.util.regex.Pattern
+
+class ExtractionPipelines(private val context: Context) {
+
+    private val entityExtractor = EntityExtraction.getClient(
+        EntityExtractorOptions.Builder(EntityExtractorOptions.ENGLISH).build()
+    )
+
+    private val addressKeywords = listOf("Road", "Marg", "Nagar", "Sector", "Gali", "Lane", "Building", "Floor", "Street", "City", "State", "India", "Dist", "Pin", "Kishan Gunj", "Andheri", "Marol", "MIDC", "Bazar", "Bazaar", "Chowk", "Complex", "Plot", "Flat", "Market", "Colony", "Villa", "Bhavan", "Square", "Opposite", "Opp.", "Near", "Behind", "Phase", "Block", "GIDC", "Estate", "Tower", "Shop No", "Gala No", "Andhra Pradesh", "A.P.", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "M.P.", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "U.P.", "Uttarakhand", "West Bengal", "Andaman", "Chandigarh", "Daman", "Diu", "Delhi", "Lakshadweep", "Puducherry", "Visakhapatnam", "Vijayawada", "Guntur", "Nellore", "Kurnool", "Itanagar", "Tawang", "Pasighat", "Roing", "Ziro", "Guwahati", "Silchar", "Dibrugarh", "Jorhat", "Nagaon", "Patna", "Gaya", "Bhagalpur", "Muzaffarpur", "Purnia", "Raipur", "Bhilai", "Bilaspur", "Korba", "Durg", "Panaji", "Margao", "Vasco", "Mapusa", "Ponda", "Ahmedabad", "Surat", "Vadodara", "Rajkot", "Bhavnagar", "Faridabad", "Gurugram", "Panipat", "Ambala", "Rohtak", "Shimla", "Manali", "Dharamshala", "Solan", "Mandi", "Ranchi", "Jamshedpur", "Dhanbad", "Bokaro", "Deoghar", "Bengaluru", "Mysuru", "Hubballi", "Mangaluru", "Belagavi", "Thiruvananthapuram", "Kochi", "Kozhikode", "Kollam", "Thrissur", "Indore", "Bhopal", "Jabalpur", "Gwalior", "Ujjain", "Mumbai", "Pune", "Nagpur", "Nashik", "Aurangabad", "Imphal", "Thoubal", "Kakching", "Ukhrul", "Churachandpur", "Shillong", "Tura", "Nongstoin", "Jowai", "Baghmara", "Aizawl", "Lunglei", "Saiha", "Champhai", "Kolasib", "Dimapur", "Kohima", "Mokokchung", "Tuensang", "Wokha", "Bhubaneswar", "Cuttack", "Rourkela", "Berhampur", "Sambalpur", "Ludhiana", "Amritsar", "Jalandhar", "Patiala", "Bathinda", "Jaipur", "Jodhpur", "Udaipur", "Kota", "Bikaner", "Gangtok", "Namchi", "Gyalshing", "Mangan", "Jorethang", "Chennai", "Coimbatore", "Madurai", "Tiruchirappalli", "Salem", "Hyderabad", "Warangal", "Nizamabad", "Karimnagar", "Khammam", "Agartala", "Dharmanagar", "Kailashahar", "Belonia", "Lucknow", "Kanpur", "Agra", "Varanasi", "Meerut", "Noida", "Dehradun", "Haridwar", "Roorkee", "Haldwani", "Rudrapur", "Kolkata", "Asansol", "Siliguri", "Durgapur", "Bardhaman")
+
+    private val serviceBlacklist = listOf("Works", "Repair", "Service", "Mfg", "Deals in", "Manufacturers", "Exporters")
+    private val pinRegex = Pattern.compile("\\b\\d{6}\\b")
+    private val phone10Regex = Pattern.compile("\\b\\d{10}\\b")
+    private val indianPhoneRegex = Pattern.compile("(\\+91[\\-\\s]?)?\\b[6-9]\\d{9}\\b")
+    private val emailRegex = Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}")
+    private val webRegex = Pattern.compile("(www\\.|http://|https://)[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}")
+    private val gstinRegex = Pattern.compile("\\b\\d{2}[A-Z]{5}\\d{4}[A-Z]{1}[A-Z\\d]{1}[Z]{1}[A-Z\\d]{1}\\b")
+    private val designationKeywords = listOf("CEO", "Director", "Manager", "Proprietor", "Partner", "Founder", "President", "Executive", "Engineer", "Agent", "Consultant", "Representative")
+    private val nameTitles = listOf("Mr.", "Ms.", "Mrs.", "Dr.", "Adv.", "Shri", "Smt.", "CA")
+    private val companySuffixes = listOf("Pvt. Ltd.", "LLP", "Ltd.", "Industries", "Group", "Solutions", "Services", "Books", "Depot", "Store", "Agency", "Enterprises", "Corporation", "Merchants", "Exporters", "COWork")
+
+    // Spacing tolerant email regex
+    private val tolerantEmailRegex = Pattern.compile("[a-zA-Z0-9._%+-]+\\s*@\\s*[a-zA-Z0-9.-]+\\s*\\.\\s*[a-zA-Z]{2,}")
+
+    private fun fixOcrSpelling(text: String): String {
+        var res = text.lowercase().trim()
+        if (res.contains("@") || res.contains("©") || res.contains("®")) {
+            res = res.replace("©", "@").replace("®", "@")
+            res = res.replace("gmai1.com", "gmail.com")
+                     .replace("gma1l.com", "gmail.com")
+                     .replace("gma-il.com", "gmail.com")
+                     .replace(".c0m", ".com")
+                     .replace(".co1n", ".co.in")
+                     .replace(".co.1n", ".co.in")
+        } else {
+            res = res.replace(".c0m", ".com")
+                     .replace(".co1n", ".co.in")
+                     .replace(".co.1n", ".co.in")
+        }
+        return res
+    }
+
+    private fun splitPhoneNumbers(p: String): List<String> {
+        val digits = p.filter { it.isDigit() }
+        val results = mutableListOf<String>()
+        if (digits.length >= 20) {
+            for (i in 0..digits.length - 10 step 10) {
+                results.add(digits.substring(i, i + 10))
+            }
+        } else if (digits.length == 14) {
+            results.add(digits.substring(0, 7))
+            results.add(digits.substring(7, 14))
+        } else if (digits.length == 16) {
+            results.add(digits.substring(0, 8))
+            results.add(digits.substring(8, 16))
+        } else {
+            results.add(p)
+        }
+        return results
+    }
+
+    private fun extractPhonesFromLine(lineText: String): List<String> {
+        val results = mutableListOf<String>()
+        val parts = lineText.split(Regex("[/,]"))
+        var basePrefix = ""
+        for (part in parts) {
+            val cleanPart = part.replace(Regex("[\\s\\-\\(\\)]"), "")
+            val digits = cleanPart.filter { it.isDigit() }
+            if (digits.length == 10 || digits.length == 11 || digits.length == 12) {
+                val normalized = if (digits.length == 12 && digits.startsWith("91")) digits.substring(2) else digits
+                results.add(normalized)
+                if (digits.length >= 7) {
+                    basePrefix = digits.substring(0, digits.length - 2)
+                }
+            } else if (digits.length == 7 || digits.length == 8) {
+                results.add(digits)
+                basePrefix = digits.substring(0, digits.length - 2)
+            } else if (digits.length == 2 && basePrefix.isNotEmpty()) {
+                results.add(basePrefix + digits)
+            } else if (digits.length >= 3 && digits.length < 7 && basePrefix.isNotEmpty() && basePrefix.length >= (7 - digits.length)) {
+                val prefixLen = 7 - digits.length
+                results.add(basePrefix.substring(0, prefixLen) + digits)
+            }
+        }
+        
+        if (results.isEmpty()) {
+            val cleanText = lineText.replace(Regex("[\\s\\-\\(\\)]"), "")
+            val mobMatcher = Pattern.compile("(?:91)?[6-9]\\d{9}").matcher(cleanText)
+            while (mobMatcher.find()) {
+                val num = mobMatcher.group()
+                val finalNum = if (num.startsWith("91") && num.length == 12) num.substring(2) else num
+                results.addAll(splitPhoneNumbers(finalNum))
+            }
+            val landMatcher = Pattern.compile("\\b\\d{7,8}\\b").matcher(cleanText)
+            while (landMatcher.find()) {
+                results.add(landMatcher.group())
+            }
+        }
+        
+        val areaCodeMatcher = Pattern.compile("\\(?\\b0\\d{2,4}\\)?").matcher(lineText)
+        if (areaCodeMatcher.find()) {
+            val areaCode = areaCodeMatcher.group().replace(Regex("[\\(\\)]"), "")
+            for (i in 0 until results.size) {
+                val p = results[i]
+                if ((p.length == 7 || p.length == 8) && !p.startsWith(areaCode)) {
+                    results[i] = areaCode + p
+                }
+            }
+        }
+        
+        return results
+    }
+
+    private fun isolateDesignation(lineText: String, keywords: List<String>): String {
+        val matchedKeyword = keywords.find { lineText.contains(it, ignoreCase = true) } ?: return lineText
+        val cleaned = lineText.replace(Regex("[()\\-:]"), " ").trim()
+        val words = cleaned.split(Regex("\\s+"))
+        val kwIdx = words.indexOfFirst { it.contains(matchedKeyword, ignoreCase = true) }
+        if (kwIdx != -1) {
+            val start = maxOf(0, kwIdx - 1)
+            val end = minOf(words.size, kwIdx + 1)
+            return words.subList(start, end).joinToString(" ")
+        }
+        return lineText
+    }
+
+    private fun sortLinesSpatially(lines: List<Text.Line>): List<Text.Line> {
+        return lines.sortedWith(Comparator { l1, l2 ->
+            val y1 = l1.boundingBox?.top ?: 0
+            val y2 = l2.boundingBox?.top ?: 0
+            val x1 = l1.boundingBox?.left ?: 0
+            val x2 = l2.boundingBox?.left ?: 0
+            if (Math.abs(y1 - y2) < 20) {
+                x1.compareTo(x2)
+            } else {
+                y1.compareTo(y2)
+            }
+        })
+    }
+
+    // Pipeline 1: Pure Google ML Kit Entity Extraction Alone
+    suspend fun processPipeline1(visionText: Text): CardResult {
+        val fullText = visionText.text
+        val entities = extractEntities(fullText)
+        
+        val phones = mutableListOf<String>()
+        val emails = mutableListOf<String>()
+        var address = ""
+        val websites = mutableListOf<String>()
+
+        entities.forEach { entityAnnotation ->
+            entityAnnotation.entities.forEach { entity ->
+                when (entity.type) {
+                    Entity.TYPE_PHONE -> phones.add(entityAnnotation.annotatedText)
+                    Entity.TYPE_EMAIL -> emails.add(entityAnnotation.annotatedText)
+                    Entity.TYPE_ADDRESS -> address = if (address.isEmpty()) entityAnnotation.annotatedText else "$address, ${entityAnnotation.annotatedText}"
+                    Entity.TYPE_URL -> websites.add(entityAnnotation.annotatedText)
+                }
+            }
+        }
+
+        return CardResult(
+            pipelineName = "Pipeline 1: Pure ML Kit Entity Extraction",
+            phone = phones.distinct(),
+            email = emails.distinct(),
+            address = address,
+            website = websites.distinct(),
+            extras = visionText.text,
+            rawOcrText = visionText.text
+        )
+    }
+
+    // Pipeline 2: Combo (Pre-cleaned ML Kit + Layout Heuristics)
+    suspend fun processPipeline2(visionText: Text): CardResult {
+        val fullText = visionText.text
+        
+        // Pre-clean phone candidates
+        val cleanedPhoneLines = visionText.textBlocks
+            .flatMap { it.lines }
+            .map { line -> line.text.filter { it.isDigit() || it == '+' } }
+            .filter { it.length >= 10 }
+            .flatMap { splitPhoneNumbers(it) }
+            .joinToString("\n")
+        
+        val textToFeed = if (cleanedPhoneLines.isNotEmpty()) "$fullText\n$cleanedPhoneLines" else fullText
+        val entities = extractEntities(textToFeed)
+        
+        val phones = mutableListOf<String>()
+        val emails = mutableListOf<String>()
+        var address = ""
+        val websites = mutableListOf<String>()
+
+        entities.forEach { entityAnnotation ->
+            entityAnnotation.entities.forEach { entity ->
+                when (entity.type) {
+                    Entity.TYPE_PHONE -> {
+                        val p = entityAnnotation.annotatedText.filter { it.isDigit() || it == '+' || it == '-' }
+                        if (p.length >= 7) {
+                            phones.addAll(splitPhoneNumbers(p))
+                        }
+                    }
+                    Entity.TYPE_EMAIL -> emails.add(fixOcrSpelling(entityAnnotation.annotatedText))
+                    Entity.TYPE_ADDRESS -> address = if (address.isEmpty()) entityAnnotation.annotatedText else "$address, ${entityAnnotation.annotatedText}"
+                    Entity.TYPE_URL -> websites.add(fixOcrSpelling(entityAnnotation.annotatedText))
+                }
+            }
+        }
+
+        phones.removeIf { it.filter { c -> c.isDigit() }.length == 6 }
+
+        val p1Clean = CardResult(
+            pipelineName = "Pipeline 2: ML Kit + Heuristics Combo",
+            phone = phones.distinct(),
+            email = emails.distinct(),
+            address = address,
+            website = websites.distinct(),
+            extras = visionText.text
+        )
+
+        return runHeuristicExtraction(visionText, p1Clean)
+    }
+
+    // Pipeline 3: Pure Heuristics Alone
+    fun processPipeline3(visionText: Text): CardResult {
+        return runHeuristicExtraction(visionText, CardResult(pipelineName = "Pipeline 3: Pure Heuristics"))
+    }
+
+    private fun runHeuristicExtraction(visionText: Text, initial: CardResult): CardResult {
+        val blocks = visionText.textBlocks
+        val unsortedLines = blocks.flatMap { it.lines }
+        
+        val remainingLines = sortLinesSpatially(unsortedLines).toMutableList()
+
+        var company = initial.company
+        var name = initial.name
+        var designation = initial.designation
+        val phones = initial.phone.toMutableList()
+        val emails = initial.email.toMutableList()
+        val websites = initial.website.toMutableList()
+        var address = initial.address
+        var fax = initial.fax
+        var gstin = initial.gstin
+
+        // Remove initial address text from line pool to prevent duplicates
+        if (address.isNotEmpty()) {
+            remainingLines.removeAll { line ->
+                address.contains(line.text, ignoreCase = true) || line.text.contains(address, ignoreCase = true)
+            }
+        }
+
+        // 1. Emails
+        val emailMatches = mutableListOf<String>()
+        val mEmail = tolerantEmailRegex.matcher(visionText.text)
+        while (mEmail.find()) { 
+            val rawEmail = mEmail.group()
+            val cleanedEmail = rawEmail.replace(" ", "")
+            emailMatches.add(fixOcrSpelling(cleanedEmail)) 
+        }
+        emailMatches.forEach { if (!emails.contains(it)) emails.add(it) }
+        emails.forEach { email -> remainingLines.removeAll { it.text.replace(" ", "").contains(email, ignoreCase = true) } }
+
+        // 2. Websites
+        val webMatches = mutableListOf<String>()
+        val mWeb = webRegex.matcher(visionText.text)
+        while (mWeb.find()) { webMatches.add(fixOcrSpelling(mWeb.group())) }
+        webMatches.forEach { if (!websites.contains(it)) websites.add(it) }
+        websites.forEach { site -> remainingLines.removeAll { it.text.contains(site, ignoreCase = true) } }
+
+        // 3. GSTIN
+        if (gstin.isEmpty()) {
+            val gstinLine = remainingLines.find { gstinRegex.matcher(it.text).find() }
+            if (gstinLine != null) {
+                val m = gstinRegex.matcher(gstinLine.text)
+                if (m.find()) gstin = m.group()
+                remainingLines.remove(gstinLine)
+            }
+        }
+
+        // 4. Fax
+        val faxPrefix = listOf("fax", "facsimile")
+        if (fax.isEmpty()) {
+            val faxLine = remainingLines.find { line -> faxPrefix.any { line.text.contains(it, ignoreCase = true) } }
+            if (faxLine != null) {
+                fax = faxLine.text
+                remainingLines.remove(faxLine)
+            }
+        }
+
+        // 5. Designation (extract early) & Anchored Name
+        if (designation.isEmpty()) {
+            val desigLine = remainingLines.find { line -> designationKeywords.any { line.text.contains(it, ignoreCase = true) } }
+            if (desigLine != null) {
+                designation = isolateDesignation(desigLine.text, designationKeywords)
+                remainingLines.remove(desigLine)
+                
+                // Strategy 3: Designation Anchoring for Person Name
+                if (name.isEmpty()) {
+                    // Look for line directly above or left of designation
+                    val anchorCandidates = remainingLines.filter { line ->
+                        !addressKeywords.any { line.text.contains(it, ignoreCase = true) } &&
+                        !line.text.contains("@") && !line.text.contains("www")
+                    }
+                    val closestName = anchorCandidates.minByOrNull { line ->
+                        val desigTop = desigLine.boundingBox?.top ?: 0
+                        val desigLeft = desigLine.boundingBox?.left ?: 0
+                        val lineBottom = line.boundingBox?.bottom ?: 0
+                        val lineRight = line.boundingBox?.right ?: 0
+                        Math.min(
+                            Math.abs(desigTop - lineBottom), // Above
+                            Math.abs(desigLeft - lineRight) // Left
+                        )
+                    }
+                    if (closestName != null) {
+                        val desigTop = desigLine.boundingBox?.top ?: 0
+                        val desigLeft = desigLine.boundingBox?.left ?: 0
+                        val lineBottom = closestName.boundingBox?.bottom ?: 0
+                        val lineRight = closestName.boundingBox?.right ?: 0
+                        if (Math.min(Math.abs(desigTop - lineBottom), Math.abs(desigLeft - lineRight)) < 150) {
+                            name = closestName.text
+                            remainingLines.remove(closestName)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Company (extract early)
+        if (company.isEmpty()) {
+            val compLine = remainingLines.find { line -> companySuffixes.any { line.text.contains(it, ignoreCase = true) } }
+            if (compLine != null) {
+                company = compLine.text
+                remainingLines.remove(compLine)
+            } else if (remainingLines.isNotEmpty()) {
+                val bestLine = remainingLines
+                    .filter { it.text.length in 3..59 }
+                    .maxByOrNull { line ->
+                        val height = (line.boundingBox?.height() ?: 0).toDouble()
+                        height * height
+                    }
+                if (bestLine != null) {
+                    company = bestLine.text
+                    remainingLines.remove(bestLine)
+                }
+            }
+        }
+
+        // 7. Person Name (extract early - dictionary removed)
+        if (name.isEmpty()) {
+            val nameCandidates = remainingLines.filter { line ->
+                val text = line.text.lowercase()
+                
+                val containsDesignation = designationKeywords.any { kw ->
+                    if (kw == "CA") {
+                        val isNamePrefix = Pattern.compile("\\bCA\\b\\s+[A-Z]").matcher(line.text).find()
+                        !isNamePrefix
+                    } else {
+                        text.contains(kw.lowercase())
+                    }
+                }
+                
+                !containsDesignation &&
+                !addressKeywords.any { text.contains(it.lowercase()) } &&
+                !text.contains("@") && !text.contains("www") && text.trim().isNotEmpty()
+            }
+            
+            val nameLine = nameCandidates.find { line -> nameTitles.any { line.text.contains(it, ignoreCase = true) } }
+            if (nameLine != null) {
+                name = nameLine.text
+                remainingLines.remove(nameLine)
+            } else if (nameCandidates.isNotEmpty()) {
+                val topName = nameCandidates.minByOrNull { it.boundingBox?.top ?: 0 }
+                if (topName != null) {
+                    name = topName.text
+                    remainingLines.remove(topName)
+                }
+            }
+        }
+
+        // 8. Phones (Aggressive Regex)
+        val aggPhoneRegex = Pattern.compile("(\\+?91)?[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d[\\s\\-]*\\d")
+        val mPhone = aggPhoneRegex.matcher(visionText.text)
+        while (mPhone.find()) {
+            val rawPhone = mPhone.group()
+            val digits = rawPhone.filter { it.isDigit() }
+            val finalNum = if (digits.length == 12 && digits.startsWith("91")) digits.substring(2) else digits
+            if (finalNum.length == 10 && !phones.contains(finalNum)) {
+                phones.add(finalNum)
+            }
+        }
+
+        val extractedPhones = mutableListOf<String>()
+        val phoneLinesToRemove = mutableListOf<Text.Line>()
+        for (line in remainingLines) {
+            val linePhones = extractPhonesFromLine(line.text)
+            if (linePhones.isNotEmpty()) {
+                extractedPhones.addAll(linePhones)
+                phoneLinesToRemove.add(line)
+            }
+        }
+        extractedPhones.forEach { if (!phones.contains(it)) phones.add(it) }
+        remainingLines.removeAll(phoneLinesToRemove)
+
+        phones.removeIf { it.filter { c -> c.isDigit() }.length == 6 }
+
+        // 9. Address & Pincode with Column-Protected Proximity Logic (vertical proximity grouping)
+        val foundAddressLines = mutableListOf<String>()
+        val linesToRemove = mutableListOf<Text.Line>()
+
+        for (line in remainingLines) {
+            val text = line.text
+            val isPinLine = pinRegex.matcher(text).find()
+            val hasAddrKeywords = addressKeywords.any { text.contains(it, ignoreCase = true) }
+            
+            if (isPinLine || hasAddrKeywords) {
+                foundAddressLines.add(text)
+                linesToRemove.add(line)
+                
+                val currentBox = line.boundingBox
+                val y = currentBox?.top ?: 0
+                val xStart = currentBox?.left ?: 0
+                
+                // A. Backward (Upward) Proximity Scan
+                val upwardLines = remainingLines.filter { other ->
+                    other != line && !linesToRemove.contains(other) &&
+                    (y - (other.boundingBox?.bottom ?: 0)) in 1..45 &&
+                    Math.abs((other.boundingBox?.left ?: 0) - xStart) < 150
+                }
+                upwardLines.forEach { adj ->
+                    val adjText = adj.text
+                    val isInvalidAddrLine = emailRegex.matcher(adjText).find() || 
+                                           webRegex.matcher(adjText).find() ||
+                                           faxPrefix.any { adjText.contains(it, ignoreCase = true) } ||
+                                           serviceBlacklist.any { adjText.contains(it, ignoreCase = true) }
+                    
+                    if (!isInvalidAddrLine) {
+                        foundAddressLines.add(0, adjText)
+                        linesToRemove.add(adj)
+                    }
+                }
+
+                // B. Forward (Downward) Proximity Scan
+                val adjacentLines = remainingLines.filter { other ->
+                    other != line && !linesToRemove.contains(other) &&
+                    Math.abs((other.boundingBox?.top ?: 0) - y) < 45 &&
+                    Math.abs((other.boundingBox?.left ?: 0) - xStart) < 150
+                }
+                adjacentLines.forEach { adj ->
+                    val adjText = adj.text
+                    val isInvalidAddrLine = emailRegex.matcher(adjText).find() || 
+                                           webRegex.matcher(adjText).find() ||
+                                           faxPrefix.any { adjText.contains(it, ignoreCase = true) } ||
+                                           serviceBlacklist.any { adjText.contains(it, ignoreCase = true) }
+                    
+                    if (!isInvalidAddrLine) {
+                        foundAddressLines.add(adjText)
+                        linesToRemove.add(adj)
+                    }
+                }
+            }
+        }
+        
+        if (foundAddressLines.isNotEmpty()) {
+            val newAddr = foundAddressLines.distinct().joinToString(", ")
+            address = if (address.isEmpty()) newAddr else "$address, $newAddr"
+            remainingLines.removeAll(linesToRemove)
+        }
+
+        // 10. Extras
+        val extras = visionText.text
+
+        return initial.copy(
+            company = company,
+            name = name,
+            designation = designation,
+            phone = phones.distinct(),
+            email = emails.distinct(),
+            website = websites.distinct(),
+            address = address,
+            fax = fax,
+            gstin = gstin,
+            extras = extras,
+            rawOcrText = visionText.text
+        )
+    }
+
+
+    private suspend fun extractEntities(text: String): List<EntityAnnotation> {
+        return try {
+            entityExtractor.downloadModelIfNeeded().await()
+            entityExtractor.annotate(text).await()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+}
