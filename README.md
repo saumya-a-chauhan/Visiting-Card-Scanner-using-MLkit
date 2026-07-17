@@ -23,11 +23,6 @@ This was developed as a 2-month internship project focusing on Mobile Machine Le
 - **Image Loading**: Coil (Compose)
 - **Testing**: Python + ADB + AndroidX Espresso/JUnit4
 
-## 📸 Screenshots
-*(Add screenshots of your app here)*
-| Scanner Screen | Smart Extractions | Edit Mode |
-|:---:|:---:|:---:|
-| <img src="scanner_placeholder.png" width="250"/> | <img src="results_placeholder.png" width="250"/> | <img src="edit_placeholder.png" width="250"/> |
 
 ## 🧠 How the Extraction Engine Works
 Standard text parsers fail on business cards because design layouts vary wildly. Our custom `ExtractionPipelines.kt` uses a spatial proximity algorithm:
