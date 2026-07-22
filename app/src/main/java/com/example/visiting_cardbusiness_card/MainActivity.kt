@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentsalPermissionsApi::class)
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()

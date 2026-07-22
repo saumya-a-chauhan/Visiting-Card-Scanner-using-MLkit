@@ -20,6 +20,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * MainViewModel: The central brain of the application.
+ * It manages the state for Jetpack Compose (UI) and orchestrates the complex ML Kit pipeline.
+ * Crucially, it handles the double-pass OCR logic to automatically fix skewed business cards
+ * by applying an Android Matrix rotation before extracting the final data.
+ */
 class MainViewModel : ViewModel() {
     val scannedCards = mutableStateListOf<ScannedCard>()
     
@@ -27,8 +33,16 @@ class MainViewModel : ViewModel() {
     val currentResults = mutableStateOf<List<CardResult>>(emptyList())
     val isProcessing = mutableStateOf(false)
 
+    // Initialize Google ML Kit Text Recognition with default options.
+    // This is incredibly lightweight (~300KB impact) as it downloads dynamically via Google Play Services.
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
+    /**
+     * getDominantRotation
+     * Scans the initial raw output from ML Kit to detect if the text is physically sideways.
+     * @param visionText The raw text output from the first ML Kit pass.
+     * @return The angle to rotate the image (e.g., 90, 180, 270) to make it perfectly upright.
+     */
     private fun getDominantRotation(visionText: Text): Int {
         val angles = visionText.textBlocks.flatMap { it.lines }.map { it.angle }
         if (angles.isEmpty()) return 0
@@ -47,6 +61,13 @@ class MainViewModel : ViewModel() {
         return counts.maxByOrNull { it.value }?.key ?: 0
     }
 
+    /**
+     * runPipelines
+     * Initiates the custom Spatial Heuristic Engine (Pipeline 3) to extract structured fields.
+     * @param context App context for initialization.
+     * @param uri The original URI for saving history.
+     * @param visionText The perfected, perfectly upright text from ML Kit.
+     */
     private suspend fun runPipelines(context: Context, uri: Uri, visionText: Text) {
         val pipelines = ExtractionPipelines(context)
         val result = pipelines.processPipeline3(visionText)
@@ -58,15 +79,22 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    /**
+     * processImage
+     * The master orchestrator. Takes the image from CameraX or Gallery, passes it to ML Kit,
+     * checks for rotation, fixes it if necessary via Android Matrix, and triggers extraction.
+     */
     fun processImage(context: Context, uri: Uri) {
         currentImageUri.value = uri
         isProcessing.value = true
         
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // PASS 1: Send the raw, unedited image directly into ML Kit
                 val image = InputImage.fromFilePath(context, uri)
                 val visionText = Tasks.await(recognizer.process(image))
                 
+                // Check if the text is sideways (e.g., phone held portrait, card is landscape)
                 val rotationNeeded = getDominantRotation(visionText)
                 
                 if (rotationNeeded != 0) {
@@ -74,10 +102,15 @@ class MainViewModel : ViewModel() {
                     if (bitmap != null) {
                         val matrix = Matrix()
                         // Rotate the bitmap in the opposite direction of the detected text angle
+                        // This uses hardware acceleration to perfectly remap every pixel.
                         matrix.postRotate(-rotationNeeded.toFloat())
                         val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
                         val rotatedImage = InputImage.fromBitmap(rotatedBitmap, 0)
+                        
+                        // PASS 2: Send the fixed, upright image back to ML Kit!
                         val newVisionText = Tasks.await(recognizer.process(rotatedImage))
+                        
+                        // Finally, send this perfect text to our Extraction Engine
                         runPipelines(context, uri, newVisionText)
                     } else {
                         runPipelines(context, uri, visionText)

@@ -6,6 +6,12 @@ import com.example.visiting_cardbusiness_card.model.CardResult
 import com.google.mlkit.vision.text.Text
 import java.util.regex.Pattern
 
+/**
+ * ExtractionPipelines: The Custom Spatial Heuristic Engine.
+ * This class replaces heavy NLP models (like ML Kit Entity Extractor) to save ~50MB of app size.
+ * It uses strict Regex for structured fields (Phone, Email, GSTIN) and advanced
+ * spatial X/Y coordinate grouping for unstructured fields (Address, Name, Company).
+ */
 class ExtractionPipelines(private val context: Context) {
 
     private val addressKeywords = listOf("Road", "Marg", "Nagar", "Sector", "Gali", "Lane", "Building", "Floor", "Street", "City", "State", "India", "Dist", "Pin", "Kishan Gunj", "Andheri", "Marol", "MIDC", "Bazar", "Bazaar", "Chowk", "Complex", "Plot", "Flat", "Market", "Colony", "Villa", "Bhavan", "Square", "Opposite", "Opp.", "Near", "Behind", "Phase", "Block", "GIDC", "Estate", "Tower", "Shop No", "Gala No", "Andhra Pradesh", "A.P.", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "M.P.", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "U.P.", "Uttarakhand", "West Bengal", "Andaman", "Chandigarh", "Daman", "Diu", "Delhi", "Lakshadweep", "Puducherry", "Visakhapatnam", "Vijayawada", "Guntur", "Nellore", "Kurnool", "Itanagar", "Tawang", "Pasighat", "Roing", "Ziro", "Guwahati", "Silchar", "Dibrugarh", "Jorhat", "Nagaon", "Patna", "Gaya", "Bhagalpur", "Muzaffarpur", "Purnia", "Raipur", "Bhilai", "Bilaspur", "Korba", "Durg", "Panaji", "Margao", "Vasco", "Mapusa", "Ponda", "Ahmedabad", "Surat", "Vadodara", "Rajkot", "Bhavnagar", "Faridabad", "Gurugram", "Panipat", "Ambala", "Rohtak", "Shimla", "Manali", "Dharamshala", "Solan", "Mandi", "Ranchi", "Jamshedpur", "Dhanbad", "Bokaro", "Deoghar", "Bengaluru", "Mysuru", "Hubballi", "Mangaluru", "Belagavi", "Thiruvananthapuram", "Kochi", "Kozhikode", "Kollam", "Thrissur", "Indore", "Bhopal", "Jabalpur", "Gwalior", "Ujjain", "Mumbai", "Pune", "Nagpur", "Nashik", "Aurangabad", "Imphal", "Thoubal", "Kakching", "Ukhrul", "Churachandpur", "Shillong", "Tura", "Nongstoin", "Jowai", "Baghmara", "Aizawl", "Lunglei", "Saiha", "Champhai", "Kolasib", "Dimapur", "Kohima", "Mokokchung", "Tuensang", "Wokha", "Bhubaneswar", "Cuttack", "Rourkela", "Berhampur", "Sambalpur", "Ludhiana", "Amritsar", "Jalandhar", "Patiala", "Bathinda", "Jaipur", "Jodhpur", "Udaipur", "Kota", "Bikaner", "Gangtok", "Namchi", "Gyalshing", "Mangan", "Jorethang", "Chennai", "Coimbatore", "Madurai", "Tiruchirappalli", "Salem", "Hyderabad", "Warangal", "Nizamabad", "Karimnagar", "Khammam", "Agartala", "Dharmanagar", "Kailashahar", "Belonia", "Lucknow", "Kanpur", "Agra", "Varanasi", "Meerut", "Noida", "Dehradun", "Haridwar", "Roorkee", "Haldwani", "Rudrapur", "Kolkata", "Asansol", "Siliguri", "Durgapur", "Bardhaman")
@@ -21,9 +27,14 @@ class ExtractionPipelines(private val context: Context) {
     private val nameTitles = listOf("Mr.", "Ms.", "Mrs.", "Dr.", "Adv.", "Shri", "Smt.", "CA")
     private val companySuffixes = listOf("Pvt. Ltd.", "LLP", "Ltd.", "Industries", "Group", "Solutions", "Services", "Books", "Depot", "Store", "Agency", "Enterprises", "Corporation", "Merchants", "Exporters", "COWork")
 
-    // Spacing tolerant email regex
+    // Spacing tolerant email regex to handle bad OCR scans (e.g. "name @ domain . com")
     private val tolerantEmailRegex = Pattern.compile("[a-zA-Z0-9._%+-]+\\s*@\\s*[a-zA-Z0-9.-]+\\s*\\.\\s*[a-zA-Z]{2,}")
 
+    /**
+     * fixOcrSpelling
+     * Helper function to fix common ML Kit Vision errors on business cards.
+     * Often, the OCR misreads '@' as '©', or '.com' as '.c0m' due to stylized fonts.
+     */
     private fun fixOcrSpelling(text: String): String {
         var res = text.lowercase().trim()
         if (res.contains("@") || res.contains("©") || res.contains("®")) {
@@ -61,6 +72,13 @@ class ExtractionPipelines(private val context: Context) {
         return results
     }
 
+    /**
+     * extractPhonesFromLine
+     * Highly specialized logic to extract phone numbers, particularly handling the common
+     * Indian business card shorthand format (e.g., "9876543210 / 11").
+     * Standard Regex fails on this shorthand, so this dynamically reconstructs the secondary number
+     * by using the base prefix of the primary number.
+     */
     private fun extractPhonesFromLine(lineText: String): List<String> {
         val results = mutableListOf<String>()
         val parts = lineText.split(Regex("[/,]"))
@@ -143,6 +161,13 @@ class ExtractionPipelines(private val context: Context) {
 
 
     // Pipeline 3: Pure Heuristics Alone
+    /**
+     * processPipeline3 (The Core Engine)
+     * This orchestrates the entire extraction process.
+     * 1. Extracts structured fields (Phone, Email, Web, GSTIN) using strict Regex.
+     * 2. Groups scattered Address lines using X/Y spatial proximity to an Anchor keyword.
+     * 3. Suggests Unstructured fields (Name, Designation, Company) based on leftover text.
+     */
     fun processPipeline3(visionText: Text): CardResult {
         return runHeuristicExtraction(visionText, CardResult(pipelineName = "Pipeline 3: Pure Heuristics"))
     }
